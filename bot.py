@@ -9,9 +9,11 @@ async def new_member_handler(message: types.Message):
 
     user_id = inviter.id
     chat_id = message.chat.id
+    inviter_name = inviter.full_name
+
     count = len(message.new_chat_members)
 
-    # Save to database (same as before)
+    # SAVE TO DATABASE
     cursor.execute("SELECT count FROM invites WHERE user_id=?", (user_id,))
     row = cursor.fetchone()
 
@@ -22,28 +24,25 @@ async def new_member_handler(message: types.Message):
 
     conn.commit()
 
-    # BUFFER (collect joins)
-    if user_id not in invite_buffer:
-        invite_buffer[user_id] = 0
+    # ADD TO BUFFER
+    invite_buffer[user_id] = invite_buffer.get(user_id, 0) + count
 
-    invite_buffer[user_id] += count
+    # 🔥 IMPORTANT FIX: only ONE task per user
+    if user_id not in invite_tasks:
 
-    # If task already running → do nothing
-    if user_id in invite_tasks:
-        return
+        async def delayed_send(user_id=user_id, chat_id=chat_id, inviter_name=inviter_name):
+            await asyncio.sleep(10)
 
-    async def send_summary():
-        await asyncio.sleep(10)  # ⏳ wait 10 seconds
+            total = invite_buffer.get(user_id, 0)
 
-        total = invite_buffer.get(user_id, 0)
+            if total > 0:
+                await bot.send_message(
+                    chat_id,
+                    f"👤 {inviter_name} invited {total} users 👥"
+                )
 
-        await bot.send_message(
-            chat_id,
-            f"👤 {inviter.full_name} invited {total} users 👥"
-        )
+            # reset AFTER sending
+            invite_buffer[user_id] = 0
+            invite_tasks.pop(user_id, None)
 
-        # reset
-        invite_buffer[user_id] = 0
-        invite_tasks.pop(user_id, None)
-
-    invite_tasks[user_id] = asyncio.create_task(send_summary())
+        invite_tasks[user_id] = asyncio.create_task(delayed_send())
