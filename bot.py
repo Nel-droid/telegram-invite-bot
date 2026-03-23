@@ -1,8 +1,9 @@
 import asyncio
 import logging
+import os
 from aiogram import Bot, Dispatcher, types
 
-API_TOKEN = "8707458665:AAETdO1nYA7t387k6SxCLnL4GjE881I3GJQ"
+API_TOKEN = os.getenv("API_TOKEN")
 
 logging.basicConfig(level=logging.INFO)
 
