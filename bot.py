@@ -3,7 +3,7 @@ import logging
 import sqlite3
 import os
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.exceptions import TelegramMigrateToChat, TelegramForbiddenError
+from aiogram.exceptions import TelegramMigrateToChat
 
 # --- CONFIGURATION ---
 TOKEN = "8707458665:AAGa47O8CAPBIksqqhVTBZcCceCtFUOCAbE"
@@ -23,7 +23,6 @@ cursor.execute("""
 """)
 conn.commit()
 
-# --- TRACKING ---
 invite_tasks = {} 
 
 @dp.message(F.new_chat_members)
@@ -36,7 +35,6 @@ async def new_member_handler(message: types.Message):
     inviter_name = f"@{inviter.username}" if inviter.username else inviter.full_name
     added_count = len(message.new_chat_members)
 
-    # 1. Update Database
     cursor.execute("""
         INSERT INTO invites (user_id, count) 
         VALUES (?, ?) 
@@ -44,7 +42,6 @@ async def new_member_handler(message: types.Message):
     """, (user_id, added_count, added_count))
     conn.commit()
 
-    # 2. Timer Logic (30-second buffer)
     if user_id in invite_tasks:
         return 
 
@@ -59,24 +56,17 @@ async def new_member_handler(message: types.Message):
         try:
             await message.answer(f"👤 {inviter_name} {total}ta foydalanuvchini qo'shdi 👥")
         except TelegramMigrateToChat as e:
-            # If group upgrades to supergroup, the bot sends to the new ID
-            logging.warning(f"Group migrated to {e.migrate_to_chat_id}")
             await bot.send_message(e.migrate_to_chat_id, f"👤 {inviter_name} {total}ta foydalanuvchini qo'shdi 👥")
         except Exception as e:
-            logging.error(f"Error sending message: {e}")
+            logging.error(f"Error: {e}")
         finally:
             invite_tasks.pop(user_id, None)
 
     asyncio.create_task(send_summary())
 
-# --- STARTUP ---
 async def main():
     logging.basicConfig(level=logging.INFO)
-    print("Bot is starting with new token...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        print("Bot stopped.")
+    asyncio.run(main())
