@@ -6,7 +6,7 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.exceptions import TelegramMigrateToChat
 
 # --- CONFIGURATION ---
-TOKEN = "8707458665:AAGa47O8CAPBIksqqhVTBZcCceCtFUOCAbE"
+TOKEN = "8707458665:AAEFz93g5-Gv5O_Mspqav8UADJklUW62pQk"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
