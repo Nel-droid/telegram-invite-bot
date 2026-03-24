@@ -9,7 +9,7 @@ async def new_member_handler(message: types.Message):
 
     user_id = inviter.id
     chat_id = message.chat.id
-    inviter_name = inviter.full_name
+    inviter_name = "@" + inviter.username if inviter.username else inviter.full_name
 
     count = len(message.new_chat_members)
 
@@ -27,11 +27,11 @@ async def new_member_handler(message: types.Message):
     # ADD TO BUFFER
     invite_buffer[user_id] = invite_buffer.get(user_id, 0) + count
 
-    # 🔥 IMPORTANT FIX: only ONE task per user
+    # 🔥 ONLY CREATE ONE TIMER
     if user_id not in invite_tasks:
 
-        async def delayed_send(user_id=user_id, chat_id=chat_id, inviter_name=inviter_name):
-            await asyncio.sleep(10)
+        async def send_after_delay():
+            await asyncio.sleep(180)  # ⏳ 3 minutes
 
             total = invite_buffer.get(user_id, 0)
 
@@ -41,8 +41,8 @@ async def new_member_handler(message: types.Message):
                     f"👤 {inviter_name} invited {total} users 👥"
                 )
 
-            # reset AFTER sending
+            # RESET
             invite_buffer[user_id] = 0
             invite_tasks.pop(user_id, None)
 
-        invite_tasks[user_id] = asyncio.create_task(delayed_send())
+        invite_tasks[user_id] = asyncio.create_task(send_after_delay())
