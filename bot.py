@@ -1,75 +1,143 @@
-import asyncio
 import logging
 import sqlite3
 import os
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.exceptions import TelegramMigrateToChat
+from telegram import Update
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+)
 
-# --- CONFIGURATION ---
-TOKEN = os.environ.get("BOT_TOKEN", "YOUR_TOKEN_HERE")  # ✅ use env var, not hardcoded
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
+# ================= CONFIG =================
+TOKEN = os.getenv("BOT_TOKEN")  # set this in Railway
 
-# --- DATABASE SETUP ---
-db_path = "/tmp/invites.db"
-conn = sqlite3.connect(db_path, check_same_thread=False)
+# ================= LOGGING =================
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+
+# ================= DATABASE =================
+DB_PATH = os.getenv("DB_PATH", "stats.db")
+
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
+
 cursor.execute("""
-    CREATE TABLE IF NOT EXISTS invites (
-        user_id INTEGER PRIMARY KEY,
-        count INTEGER DEFAULT 0
-    )
+CREATE TABLE IF NOT EXISTS stats (
+    user_id INTEGER PRIMARY KEY,
+    name TEXT,
+    count INTEGER
+)
 """)
 conn.commit()
 
-invite_tasks = {}
-invite_buffer = {}  # ✅ tracks count for THIS session only
-
-@dp.message(F.new_chat_members)
-async def new_member_handler(message: types.Message):
-    inviter = message.from_user
-    if not inviter or inviter.is_bot:
+# ================= JOIN HANDLER =================
+async def handle_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.new_chat_members:
         return
 
+    inviter = update.message.from_user
+    new_members = update.message.new_chat_members
+
     user_id = inviter.id
-    chat_id = message.chat.id
-    inviter_name = f"@{inviter.username}" if inviter.username else inviter.full_name
-    added_count = len(message.new_chat_members)
+    name = inviter.full_name
+    added_count = len(new_members)
 
-    # Save to DB (all-time total)
-    cursor.execute("""
-        INSERT INTO invites (user_id, count)
-        VALUES (?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET count = count + ?
-    """, (user_id, added_count, added_count))
-    conn.commit()
+    try:
+        cursor.execute("SELECT count FROM stats WHERE user_id=?", (user_id,))
+        result = cursor.fetchone()
 
-    # ✅ Add to session buffer
-    invite_buffer[user_id] = invite_buffer.get(user_id, 0) + added_count
+        if result:
+            new_total = result[0] + added_count
+            cursor.execute(
+                "UPDATE stats SET count=?, name=? WHERE user_id=?",
+                (new_total, name, user_id)
+            )
+        else:
+            cursor.execute(
+                "INSERT INTO stats (user_id, name, count) VALUES (?, ?, ?)",
+                (user_id, name, added_count)
+            )
 
-    # ✅ Guard is set BEFORE creating the task
-    if user_id in invite_tasks:
-        return  # timer already running, buffer already updated above — nothing else to do
+        conn.commit()
 
-    async def send_summary(uid=user_id, cid=chat_id, name=inviter_name):
-        await asyncio.sleep(30)
-        total = invite_buffer.get(uid, 0)
-        try:
-            if total > 0:
-                await bot.send_message(cid, f"👤 {name} {total}ta foydalanuvchini qo'shdi 👥")
-        except TelegramMigrateToChat as e:
-            await bot.send_message(e.migrate_to_chat_id, f"👤 {name} {total}ta foydalanuvchini qo'shdi 👥")
-        except Exception as e:
-            logging.error(f"Error sending summary: {e}")
-        finally:
-            invite_buffer.pop(uid, None)   # ✅ reset session buffer
-            invite_tasks.pop(uid, None)    # ✅ clear the task guard
+    except Exception as e:
+        logging.error(f"Error in handle_join: {e}")
 
-    invite_tasks[user_id] = asyncio.create_task(send_summary())  # ✅ guard set before task runs
+# ================= /stats =================
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        cursor.execute("SELECT name, count FROM stats ORDER BY count DESC")
+        rows = cursor.fetchall()
 
-async def main():
-    logging.basicConfig(level=logging.INFO)
-    await dp.start_polling(bot)
+        if not rows:
+            await update.message.reply_text("📭 Hali hech kim foydalanuvchi qo‘shmagan.")
+            return
+
+        medals = ["🥇", "🥈", "🥉"]
+
+        text = "📊 Statistika:\n\n"
+
+        for i, (name, count) in enumerate(rows):
+            medal = medals[i] if i < 3 else "👤"
+            text += f"{medal} {name} — {count}ta foydalanuvchini qo'shdi 👥\n"
+
+        await update.message.reply_text(text)
+
+    except Exception as e:
+        logging.error(f"Error in stats: {e}")
+
+# ================= /addstats =================
+async def addstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if not update.message.reply_to_message:
+            await update.message.reply_text("❌ Reply qilib yozing:\n/addstats 10")
+            return
+
+        user = update.message.reply_to_message.from_user
+        amount = int(context.args[0])
+
+        cursor.execute("SELECT count FROM stats WHERE user_id=?", (user.id,))
+        result = cursor.fetchone()
+
+        if result:
+            new_total = result[0] + amount
+            cursor.execute(
+                "UPDATE stats SET count=?, name=? WHERE user_id=?",
+                (new_total, user.full_name, user.id)
+            )
+        else:
+            cursor.execute(
+                "INSERT INTO stats (user_id, name, count) VALUES (?, ?, ?)",
+                (user.id, user.full_name, amount)
+            )
+
+        conn.commit()
+
+        await update.message.reply_text(
+            f"✅ {user.full_name} ga {amount} ta qo‘shildi!"
+        )
+
+    except Exception as e:
+        logging.error(f"Error in addstats: {e}")
+        await update.message.reply_text("❌ Xatolik yuz berdi.")
+
+# ================= MAIN =================
+def main():
+    if not TOKEN:
+        raise ValueError("BOT_TOKEN environment variable is not set!")
+
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_join))
+    app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("addstats", addstats))
+
+    print("🚀 Bot ishga tushdi...")
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
